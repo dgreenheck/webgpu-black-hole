@@ -19,12 +19,49 @@ export class BlackHoleUI {
   }
 
   setupUI() {
+    this.setupCameraFolder();
     this.setupConfigFolder();
     this.setupPerformanceFolder();
     this.setupBlackHoleFolder();
     this.setupStarsFolder();
     this.setupNebulaFolder();
     this.setupBloomFolder();
+  }
+
+  // ==========================================================================
+  // CAMERA ANIMATION
+  // ==========================================================================
+
+  setupCameraFolder() {
+    const cameraFolder = this.pane.addFolder({
+      title: 'Camera',
+      expanded: true
+    });
+
+    // Animation state tracking
+    this.cameraAnimState = { playing: false };
+
+    // Toggle button for cinematic animation
+    this.animButton = cameraFolder.addButton({
+      title: 'Start Cinematic Mode'
+    }).on('click', () => {
+      const isPlaying = this.callbacks.onToggleCameraAnimation?.();
+      this.cameraAnimState.playing = isPlaying;
+      this.animButton.title = isPlaying ? 'Stop Cinematic Mode' : 'Start Cinematic Mode';
+      if (isPlaying) {
+        this.showNotification('Cinematic mode started - enjoy the show!');
+      } else {
+        this.showNotification('Cinematic mode stopped');
+      }
+    });
+
+    // Info text
+    cameraFolder.addBlade({
+      view: 'text',
+      label: '',
+      parse: (v) => String(v),
+      value: 'Smooth camera flythrough'
+    });
   }
 
   // ==========================================================================

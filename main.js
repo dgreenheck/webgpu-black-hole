@@ -11,6 +11,7 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { BlackHoleSimulation } from './blackhole.js';
 import { BlackHoleUI } from './ui.js';
+import { CameraAnimation } from './camera-animation.js';
 
 // ============================================================================
 // LOCAL STORAGE
@@ -104,66 +105,96 @@ function clearConfig() {
 // ============================================================================
 
 const defaultConfig = {
-  // Black hole physics
-  blackHoleMass: 1.0,
-
-  // Accretion disk geometry
-  diskInnerRadius: 3.0,
-  diskOuterRadius: 12.0,
-
-  // Accretion disk appearance
-  // Peak temperature in thousands of Kelvin (at inner edge)
-  // Lower values (3-5) = red/orange, higher (8-10) = white/blue-white
-  diskTemperature: 5.0,
-  // Temperature falloff: 0.75 = physical, higher = steeper color gradient
-  temperatureFalloff: 0.75,
-  diskBrightness: 2.0,
-  diskRotationSpeed: 0.3,
-
-  // Turbulence pattern
-  turbulenceScale: 1.0,
-  turbulenceStretch: 5.0, // Higher = longer arcs
-  turbulenceSharpness: 1.0,
-  turbulenceCycleTime: 10.0, // Seconds before pattern cycles (prevents infinite winding)
-  turbulenceLacunarity: 2.0, // Frequency multiplier per octave
-  turbulencePersistence: 0.5, // Amplitude multiplier per octave
-
-  // Disk edge falloff
-  diskEdgeSoftnessInner: 0.15,
-  diskEdgeSoftnessOuter: 0.15,
-
-  // Relativistic effects
-  gravitationalLensing: 1.5,
-  dopplerStrength: 1.0, // Doppler beaming intensity (0 = off, 1 = realistic)
-
-  // Performance
-  stepSize: 0.3,
-
-  // Stars
-  starsEnabled: true,
-  starBackgroundColor: '#000000',
-  starDensity: 0.003,
-  starSize: 2.0,
-  starBrightness: 1.0,
-
-  // Nebula Layer 1
-  nebulaEnabled: false,
-  nebula1Scale: 2.0,
-  nebula1Density: 0.5,
-  nebula1Brightness: 0.15,
-  nebula1Color: '#1a0033',
-
-  // Nebula Layer 2
-  nebula2Scale: 6.0,
-  nebula2Density: 0.5,
-  nebula2Brightness: 0.15,
-  nebula2Color: '#4d1a26',
-
-  // Bloom post-processing
-  bloomStrength: 0.8,
-  bloomRadius: 0.5,
-  bloomThreshold: 0.2
-};
+  "blackHoleMass": 0.4,
+  "diskInnerRadius": 4.1,
+  "diskOuterRadius": 14.5,
+  "diskTemperature": 49.78,
+  "temperatureFalloff": 5.22,
+  "diskBrightness": 5,
+  "diskRotationSpeed": -8.7,
+  "turbulenceScale": 1.81,
+  "turbulenceStretch": 0.75,
+  "turbulenceSharpness": 7.4,
+  "turbulenceCycleTime": 5,
+  "turbulenceLacunarity": 3,
+  "turbulencePersistence": 0.8,
+  "diskEdgeSoftnessInner": 0.18,
+  "diskEdgeSoftnessOuter": 0.5,
+  "gravitationalLensing": 2.4,
+  "dopplerStrength": 1.0,
+  "stepSize": 1,
+  "starsEnabled": true,
+  "starBackgroundColor": "#000000",
+  "starDensity": 0.1,
+  "starSize": 1.2,
+  "starBrightness": 0.1,
+  "nebulaEnabled": true,
+  "nebula1Scale": 2,
+  "nebula1Density": 0.5,
+  "nebula1Brightness": 0.01,
+  "nebula1Color": "#071f44",
+  "nebula2Scale": 5.5,
+  "nebula2Density": 0.05,
+  "nebula2Brightness": 0.21,
+  "nebula2Color": "#010615",
+  "bloomStrength": 0.68,
+  "bloomRadius": 0.2,
+  "bloomThreshold": 0.4,
+  "turbulenceBrightness": -0.05,
+  "diskDensity": 1,
+  "qualityPreset": "medium",
+  "diskInnerThickness": 0.7,
+  "diskOuterThickness": 0.5,
+  "ringEnabled": true,
+  "ringScale": 0.83,
+  "ringContrast": 0.95,
+  "ringBrightness": 0.4,
+  "ringSharpness": 10,
+  "ringTwist": 10.3,
+  "noiseAnimFrequency": 4.2,
+  "noiseAnimAmplitude": 2,
+  "diskRadialFalloff": 2,
+  "diskOpacityFalloff": 0.5,
+  "adaptiveMinStep": 0.15,
+  "stepJitter": 0,
+  "diskInnerColor": "#a84b23",
+  "diskOuterColor": "#7f1b00",
+  "nebulaBrightness": 0.07,
+  "nebulaColor1": "#113844",
+  "nebulaColor2": "#1b214a",
+  "nebulaScale1": 3,
+  "nebulaScale2": 3.5,
+  "nebulaBlend": 0.55,
+  "nebulaSpeed": 0.065,
+  "nebulaDensity": 0.35,
+  "diskDifferentialRotation": 1,
+  "noiseEvolutionSpeed": 5,
+  "raySteps": 68,
+  "nebulaScale": 3,
+  "nebulaDetailScale": 2.4,
+  "nebulaOffsetX": 0,
+  "nebulaOffsetY": 0,
+  "nebulaOffsetZ": 0,
+  "diskTurbulence": 0.9,
+  "turbulencePrimaryScale": 0.65,
+  "turbulenceSecondaryScale": 1.3,
+  "turbulenceSecondaryStrength": 0.15,
+  "turbulenceOffset": 0.1,
+  "ringNoiseEnabled": true,
+  "ringNoiseScale": 4.5,
+  "ringNoiseAmplitude": 1.45,
+  "ringNoiseSharpness": 4,
+  "ringNoiseOffset": -0.2,
+  "ringNoiseOctaves": 2,
+  "ringNoiseLacunarity": 1.9,
+  "ringNoisePersistence": 0.45,
+  "maxRayDistance": 500,
+  "diskThickness": 1.3,
+  "heightDensityFalloff": 5,
+  "rayJitter": 1,
+  "temporalAA": false,
+  "temporalFrames": 16
+}
 
 // Load config from localStorage (merges with defaults)
 const config = loadConfig(defaultConfig);
@@ -181,7 +212,7 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   1000
 );
-camera.position.set(0, 5, 20);
+camera.position.set(0, -5, 20);
 camera.lookAt(0, 0, 0);
 
 const renderer = new THREE.WebGPURenderer({ antialias: true });
@@ -201,6 +232,12 @@ controls.rotateSpeed = -0.5;
 controls.minDistance = 5;
 controls.maxDistance = 50;
 controls.target.set(0, 0, 0);
+
+// ============================================================================
+// CAMERA ANIMATION
+// ============================================================================
+
+const cameraAnimation = new CameraAnimation(camera, controls);
 
 // ============================================================================
 // POST-PROCESSING
@@ -274,6 +311,15 @@ const ui = new BlackHoleUI(config, {
       bloomPassNode.strength.value = config.bloomStrength;
       bloomPassNode.radius.value = config.bloomRadius;
     }
+  },
+
+  // Camera animation controls
+  onToggleCameraAnimation: () => {
+    return cameraAnimation.toggle();
+  },
+
+  getCameraAnimationState: () => {
+    return cameraAnimation.playing;
   }
 });
 
@@ -317,7 +363,10 @@ async function animate() {
   const deltaTime = Math.min((currentTime - lastFrameTime) / 1000, 0.033);
   lastFrameTime = currentTime;
 
-  // Update controls
+  // Update camera animation (if playing)
+  cameraAnimation.update(deltaTime);
+
+  // Update controls (only effective when animation not playing)
   controls.update();
 
   // Update black hole simulation
