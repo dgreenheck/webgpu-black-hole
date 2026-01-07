@@ -32,6 +32,7 @@ import {
   mix,
   floor,
   step,
+  sign,
   Loop,
   Break,
   If,
@@ -226,8 +227,9 @@ const createNebulaField = (uniforms) => Fn(([rayDir]) => {
 /**
  * Calculate the color and opacity of the accretion disk at a given point.
  * Returns vec4(color.rgb, opacity) where ring patterns control opacity.
+ * Includes Doppler beaming based on disk velocity relative to observer.
  */
-const createAccretionDiskColor = (uniforms) => Fn(([hitR, hitAngle, time]) => {
+const createAccretionDiskColor = (uniforms) => Fn(([hitR, hitAngle, time, rayDir]) => {
   const innerR = uniforms.diskInnerRadius;
   const outerR = uniforms.diskOuterRadius;
 
@@ -244,7 +246,37 @@ const createAccretionDiskColor = (uniforms) => Fn(([hitR, hitAngle, time]) => {
   // Use power law falloff but ensure we stay in visible range
   const tempFalloff = pow(innerR.div(hitR), uniforms.temperatureFalloff);
   const tempK = mix(outerTempK, peakTempK, tempFalloff);
-  const diskColor = blackbodyColor(tempK);
+  const diskColor = blackbodyColor(tempK).toVar('diskColor');
+
+  // === DOPPLER BEAMING ===
+  // Material in Keplerian orbit moves tangentially (perpendicular to radial direction)
+  // Velocity direction: (-sin(angle), 0, cos(angle)) for counter-clockwise rotation
+  // The sign of diskRotationSpeed determines rotation direction
+  const rotationSign = sign(uniforms.diskRotationSpeed);
+  const velocityDir = vec3(
+    sin(hitAngle).negate().mul(rotationSign),
+    float(0.0),
+    cos(hitAngle).mul(rotationSign)
+  );
+
+  // Keplerian velocity: v ∝ 1/√r (normalized, not physical units)
+  // Scale so inner disk has higher velocity
+  const velocityMagnitude = float(1.0).div(sqrt(hitR.div(innerR)));
+
+  // Doppler factor: D = 1 / (1 - β·cos(θ))
+  // where β is velocity (as fraction of c) and θ is angle between velocity and ray
+  // When velocity aligns with ray direction (moving away from observer), cos > 0, D < 1 (dimmer)
+  // When velocity opposes ray direction (moving toward observer), cos < 0, D > 1 (brighter)
+  const beta = velocityMagnitude.mul(0.3); // Scale factor for visual effect
+  const cosTheta = dot(velocityDir, rayDir);
+  const dopplerFactor = float(1.0).div(float(1.0).sub(beta.mul(cosTheta)));
+
+  // Apply Doppler beaming: brightness ∝ D^3 (for continuous emission)
+  // Use dopplerStrength to control the effect intensity
+  const dopplerBoost = pow(dopplerFactor, float(3.0).mul(uniforms.dopplerStrength));
+
+  // Apply Doppler boost to disk color (clamped to prevent extreme values)
+  diskColor.mulAssign(clamp(dopplerBoost, float(0.1), float(5.0)));
 
   // Edge falloff - disk fades at boundaries
   const edgeFalloff = smoothstep(float(0.0), uniforms.diskEdgeSoftnessInner, normR)
@@ -416,8 +448,8 @@ export function createBlackHoleShader(uniforms) {
         If(inDisk, () => {
           const hitAngle = atan(hitPos.z, hitPos.x);
 
-          // Get disk color and opacity (includes edge falloff and turbulence)
-          const diskResult = accretionDiskColor(hitR, hitAngle, uniforms.time);
+          // Get disk color and opacity (includes edge falloff, turbulence, and Doppler beaming)
+          const diskResult = accretionDiskColor(hitR, hitAngle, uniforms.time, rayDir);
 
           // Alpha blending (front-to-back compositing)
           const remainingAlpha = float(1.0).sub(alpha);

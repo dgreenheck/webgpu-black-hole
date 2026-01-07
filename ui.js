@@ -141,6 +141,15 @@ export class BlackHoleUI {
       this.callbacks.onUniformChange('gravitationalLensing', this.config.gravitationalLensing);
     });
 
+    bhFolder.addBinding(this.config, 'dopplerStrength', {
+      min: 0.0,
+      max: 2.0,
+      step: 0.1,
+      label: 'Doppler Beaming'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('dopplerStrength', this.config.dopplerStrength);
+    });
+
     // === Disk Geometry ===
     const geometryFolder = bhFolder.addFolder({
       title: 'Geometry',
@@ -192,7 +201,7 @@ export class BlackHoleUI {
 
     appearanceFolder.addBinding(this.config, 'temperatureFalloff', {
       min: 0.25,
-      max: 5.0,
+      max: 15.0,
       step: 0.01,
       label: 'Temp Falloff'
     }).on('change', () => {

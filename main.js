@@ -134,6 +134,7 @@ const defaultConfig = {
 
   // Relativistic effects
   gravitationalLensing: 1.5,
+  dopplerStrength: 1.0, // Doppler beaming intensity (0 = off, 1 = realistic)
 
   // Performance
   stepSize: 0.3,

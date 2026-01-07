@@ -71,6 +71,7 @@ export class BlackHoleSimulation {
 
       // === Relativistic Effects ===
       gravitationalLensing: uniform(config.gravitationalLensing ?? 1.5),
+      dopplerStrength: uniform(config.dopplerStrength ?? 1.0),
 
       // === Performance ===
       stepSize: uniform(config.stepSize ?? 0.3),
@@ -176,6 +177,7 @@ export class BlackHoleSimulation {
 
     // Relativistic effects
     if (config.gravitationalLensing !== undefined) u.gravitationalLensing.value = config.gravitationalLensing;
+    if (config.dopplerStrength !== undefined) u.dopplerStrength.value = config.dopplerStrength;
 
     // Performance
     if (config.stepSize !== undefined) u.stepSize.value = config.stepSize;
