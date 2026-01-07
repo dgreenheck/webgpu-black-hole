@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: '/webgpu-galaxy/',
+  base: '/webgpu-black-hole/',
 });
