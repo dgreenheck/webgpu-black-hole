@@ -22,3 +22,5 @@ npm-debug.log*
 
 # Cache
 .cache/
+
+BLOG.md
