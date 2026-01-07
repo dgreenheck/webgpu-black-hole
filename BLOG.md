@@ -12,9 +12,9 @@ In this tutorial, we'll recreate this effect in real-time using WebGPU and Three
 
 **What we'll build:**
 - A raymarched black hole with gravitational lensing
-- An accretion disk with temperature-based coloring
-- Doppler beaming (relativistic brightness variation)
-- A procedural star field that gets distorted by gravity
+- An accretion disk with temperature-based blackbody coloring
+- Turbulent ring patterns with Keplerian rotation
+- A procedural star field and nebula background that get distorted by gravity
 - Interactive controls for all parameters
 
 [Live Demo](#) | [Source Code](https://github.com/dgreenheck/webgpu-galaxy)
@@ -36,21 +36,11 @@ Where:
 - `M` is the black hole's mass
 - `c` is the speed of light
 
-In our simulation, we use geometric units where `G = c = 1`, so `rs = 2M`.
-
-There's another critical radius called the **photon sphere** at `r = 1.5rs`. This is where photons can orbit the black hole in unstable circular orbits. Light passing just outside this radius can loop around the black hole multiple times before escaping.
+In our simulation, we use geometric units where `G = c = 1`, so `rs = 2M`. With a mass of 1.0, our event horizon is at radius 2.0.
 
 ### 1.2 How Light Bends Around a Black Hole
 
-In general relativity, massive objects curve spacetime, and light follows the curves - called **geodesics**. Near a black hole, these curves can be dramatic.
-
-The key concept is the **impact parameter** `b` - the perpendicular distance at which a light ray would pass the black hole if space were flat. There's a critical value:
-
-```
-b_critical = rs × sqrt(27)/2 ≈ 2.6 × rs
-```
-
-Rays with `b < b_critical` fall into the black hole. Rays with `b > b_critical` escape, but are bent. The closer to the critical value, the more bending occurs.
+In general relativity, massive objects curve spacetime, and light follows the curves - called **geodesics**. Near a black hole, these curves can be dramatic. Light passing close to the event horizon can loop around multiple times before escaping.
 
 This bending creates several visual effects:
 1. **Einstein rings** - Background stars appear as rings around the black hole
@@ -61,6 +51,9 @@ This bending creates several visual effects:
 
 Matter falling into a black hole doesn't drop straight in. Due to conservation of angular momentum, it forms a flat, rotating disk called an **accretion disk**.
 
+**The Inner Edge (ISCO):**
+For a Schwarzschild black hole, the innermost stable circular orbit (ISCO) is at `r = 3 × rs`. Matter inside this radius spirals rapidly into the black hole. In our simulation with `rs = 2`, this means `ISCO = 6.0` - but we often set the inner edge at `r = 3.0` for more dramatic visuals.
+
 **Temperature Profile:**
 The inner disk is hotter because gravitational potential energy converts to heat as matter falls inward. The standard thin disk model (Shakura-Sunyaev) predicts:
 
@@ -68,441 +61,532 @@ The inner disk is hotter because gravitational potential energy converts to heat
 T ∝ r^(-3/4)
 ```
 
-This means the inner edge glows white-hot while the outer edge is cooler (red/orange).
+This means the inner edge glows white-hot while the outer edge is cooler (red/orange). We'll use blackbody radiation colors to visualize this temperature gradient.
 
-**Doppler Beaming:**
-Because the disk rotates, material on one side moves toward us while the other side moves away. Relativistic effects make the approaching side appear brighter and bluer - this is called **Doppler beaming**.
+**Keplerian Rotation:**
+Material in the disk orbits according to Kepler's laws - inner material moves faster than outer material. The orbital velocity goes as:
+
+```
+v ∝ r^(-1/2)
+```
+
+This differential rotation creates shearing in the disk, stretching any structures into elongated arcs.
 
 ---
 
-## Part 2: The Rendering Approach
+## Part 2: Setting Up the Project
 
-### 2.1 Why Raymarching?
+### 2.1 Three.js with WebGPU and TSL
+
+Three.js recently introduced **Three Shading Language (TSL)**, a JavaScript-based shader language that compiles to WGSL (WebGPU) or GLSL (WebGL). This lets us write shaders in familiar JavaScript syntax.
+
+First, let's set up the basic structure:
+
+```javascript
+import * as THREE from 'three/webgpu';
+import { uniform } from 'three/tsl';
+
+// Initialize WebGPU renderer
+const renderer = new THREE.WebGPURenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Create scene and camera
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 5, 20);
+
+// Create a large inverted sphere as our render surface
+// By inverting it, we render from inside - perfect for a skybox-style shader
+const geometry = new THREE.SphereGeometry(100, 32, 32);
+geometry.scale(-1, 1, 1);  // Invert the sphere
+
+const material = new THREE.MeshBasicNodeMaterial();
+// material.colorNode will hold our shader
+```
+
+### 2.2 Shader Architecture
+
+We'll organize our shader into distinct sections:
+1. **Utility functions** - Hash functions, noise, FBM
+2. **Background** - Stars and nebula
+3. **Accretion disk** - Color and opacity calculation
+4. **Main raymarcher** - The core loop that traces light through curved spacetime
+
+**🎯 Checkpoint 1:** At this point, we have a basic Three.js WebGPU setup with an inverted sphere. Setting `material.colorNode = vec4(1, 0, 0, 1)` should give us a red screen.
+
+---
+
+## Part 3: The Raymarching Core
+
+### 3.1 What is Raymarching?
 
 Traditional rasterization renders objects by projecting triangles onto the screen. But gravitational lensing bends light in ways that triangles can't represent. We need to trace each ray's path through curved spacetime.
 
-**Raymarching** is perfect for this:
+**Raymarching** works by:
 1. For each pixel, create a ray from the camera
 2. Step the ray forward in small increments
 3. At each step, bend the ray toward the black hole
 4. Check if the ray hits the disk, falls into the hole, or escapes
 
-### 2.2 Algorithm Overview
+### 3.2 Camera Setup
 
-```
-for each pixel:
-    ray = createRay(camera, pixelCoordinates)
-    color = black
-
-    for step in range(maxSteps):
-        // Bend ray toward black hole
-        ray.direction += gravitationalAcceleration
-
-        // Step forward
-        ray.position += ray.direction * stepSize
-
-        // Check disk intersection
-        if crossedDiskPlane():
-            color += getDiskColor(hitPosition)
-
-        // Check termination
-        if ray.position.length < eventHorizon:
-            break  // Captured
-        if ray.position.length > maxDistance:
-            color += getBackgroundColor(ray.direction)
-            break  // Escaped
-
-    return color
-```
-
----
-
-## Part 3: Implementation Deep Dive
-
-### 3.1 Setting Up Three.js with TSL
-
-Three.js recently introduced **Three Shading Language (TSL)**, a JavaScript-based shader language that compiles to WGSL (WebGPU) or GLSL (WebGL). This lets us write shaders in a familiar syntax.
+First, we need to generate rays for each pixel. We build a camera coordinate system from the camera position and target:
 
 ```javascript
-import * as THREE from 'three/webgpu';
-import { screenUV, vec3, float, Fn, Loop } from 'three/tsl';
+// Get UV coordinates centered at (0,0) ranging from -1 to 1
+const uv = screenUV.sub(0.5).mul(2.0);
+const aspect = uniforms.resolution.x.div(uniforms.resolution.y);
+const screenPos = vec2(uv.x.mul(aspect), uv.y);
 
-// Create a fullscreen shader
-const material = new THREE.MeshBasicNodeMaterial();
-material.colorNode = Fn(() => {
-    // Our raymarching shader goes here
-    return vec4(1, 0, 0, 1);  // Red for testing
-})();
+// Camera basis vectors
+const camPos = uniforms.cameraPosition;
+const camTarget = uniforms.cameraTarget;
+const camForward = normalize(camTarget.sub(camPos));
+const worldUp = vec3(0.0, 1.0, 0.0);
+const camRight = normalize(cross(worldUp, camForward));
+const camUp = cross(camForward, camRight);
+
+// Generate ray direction through this pixel
+const fov = float(1.0);
+const rayDir = normalize(
+  camForward.mul(fov)
+    .add(camRight.mul(screenPos.x))
+    .add(camUp.mul(screenPos.y))
+).toVar('rayDir');
 ```
 
-### 3.2 The Geodesic Integrator
-
-The core of our simulation is bending light rays. We use a simplified model based on the Schwarzschild metric:
+**🎯 Checkpoint 2:** We can visualize the ray direction as a color to verify our camera setup:
 
 ```javascript
-// Schwarzschild radius (event horizon)
-const rs = blackHoleMass.mul(2.0);
+return vec4(rayDir.mul(0.5).add(0.5), 1.0);
+```
 
+This should show a gradient where different directions map to different colors.
+
+### 3.3 The Basic Raymarching Loop
+
+Now let's build the core loop. We'll start simple and add features incrementally:
+
+```javascript
+const rayPos = camPos.toVar('rayPos');
+const rs = uniforms.blackHoleMass.mul(2.0);  // Event horizon radius
+
+Loop(64, () => {
+  const r = length(rayPos);
+
+  // Captured by black hole?
+  If(r.lessThan(rs.mul(1.01)), () => {
+    Break();
+  });
+
+  // Escaped to infinity?
+  If(r.greaterThan(100.0), () => {
+    Break();
+  });
+
+  // Step forward
+  rayPos.addAssign(rayDir.mul(uniforms.stepSize));
+});
+```
+
+Without gravitational bending, this just traces straight lines. Let's add the physics.
+
+### 3.4 Gravitational Light Bending
+
+The key to the black hole visualization is bending light rays toward the center. We use a simplified model based on the Schwarzschild metric:
+
+```javascript
 // Direction from ray to black hole center
-const toCenter = rayPos.negate().normalize();
+const toCenter = rayPos.negate().div(r);  // Normalized
 
-// Bend strength: stronger when closer
-// Based on: a ≈ -rs/(2r²)
-const r = length(rayPos);
-const bendStrength = rs.div(r.mul(r)).mul(stepSize).mul(1.5);
+// Bend strength: stronger when closer (inverse square)
+const bendStrength = rs.div(r.mul(r)).mul(stepSize).mul(uniforms.gravitationalLensing);
 
 // Apply bending to ray direction
 rayDir.addAssign(toCenter.mul(bendStrength));
 rayDir.assign(normalize(rayDir));
+
+// Then step forward
+rayPos.addAssign(rayDir.mul(stepSize));
 ```
 
-### 3.3 First Attempt: Fixed Step Size
+The `gravitationalLensing` uniform (default 1.5) lets us tune the bend strength. A value of 1.5 gives visually pleasing results that match the expected physics reasonably well.
 
-Let's start with the simplest raymarching implementation - a fixed step size:
+**🎯 Checkpoint 3:** Now we should see a black circle in the center of the screen - rays that get too close fall into the black hole and never escape. The background (which we haven't added yet) shows through elsewhere.
 
-```javascript
-const stepSize = 0.3;
+### 3.5 Adaptive Step Size
 
-Loop(256, () => {
-    // Bend ray
-    const toCenter = rayPos.negate().normalize();
-    const bendStrength = rs.div(r.mul(r)).mul(stepSize).mul(1.5);
-    rayDir.addAssign(toCenter.mul(bendStrength));
-    rayDir.assign(normalize(rayDir));
+There's a problem with fixed step sizes: near the event horizon, light curves sharply. Large steps miss these curves, causing inaccurate geodesics. But small steps everywhere are expensive.
 
-    // Step forward
-    rayPos.addAssign(rayDir.mul(stepSize));
-
-    // Sample disk...
-});
-```
-
-This works! We get a black hole with gravitational lensing and an accretion disk. But look closely at the inner regions of the disk:
-
-**The Problem:** The inner disk is thin (we're simulating a realistic disk that gets thinner toward the center). With a fixed step size of 0.3 units, rays can skip right over the thinnest parts. This causes:
-- Missing portions of the inner disk
-- Aliased, jaggy edges
-- Inconsistent brightness
-
-The issue is fundamental: our step size is larger than the geometry we're trying to sample.
-
-### 3.4 First Fix: Adaptive Stepping Near the Black Hole
-
-Our first instinct might be to use smaller steps everywhere, but that's expensive. Instead, we can adapt the step size based on distance from the event horizon:
+The solution is **adaptive stepping** - take smaller steps where precision matters:
 
 ```javascript
-const distFromHorizon = r.sub(rs);
-const adaptiveStep = baseStepSize.mul(
-    smoothstep(0.0, rs.mul(5.0), distFromHorizon)
-        .mul(0.8).add(0.2)
-);
-```
-
-This gives us:
-- Step size = 20% of base near the event horizon
-- Step size = 100% of base far from the black hole
-- Smooth interpolation between
-
-Better! The geodesic integration near the photon sphere is now more accurate. But we still have a problem: the thin inner disk regions are still getting skipped because our step size is based on distance from the *black hole*, not distance from the *disk*.
-
-### 3.5 Second Fix: Disk-Aware Adaptive Stepping
-
-The insight is that we need smaller steps when approaching the disk plane, especially where the disk is thin. Here's our improved adaptive stepper:
-
-```javascript
-// Factor 1: Distance from event horizon (for geodesic accuracy)
 const distFromHorizon = r.sub(rs);
 const horizonFactor = smoothstep(float(0.0), rs.mul(5.0), distFromHorizon)
-    .mul(0.8).add(0.2);
-
-// Factor 2 & 3: Disk proximity with thickness awareness
-// Calculate horizontal distance (radius in disk plane)
-const rHoriz = sqrt(rayPos.x.mul(rayPos.x).add(rayPos.z.mul(rayPos.z)));
-
-// Check if we're within the disk's radial extent
-const inDiskRegion = rHoriz.greaterThan(innerR.sub(diskMargin))
-    .and(rHoriz.lessThan(outerR.add(diskMargin)));
-
-// Calculate local disk thickness at this radius
-// (inner disk is thinner than outer disk)
-const normRForThickness = clamp(
-    rHoriz.sub(innerR).div(outerR.sub(innerR)),
-    float(0.0), float(1.0)
-);
-const localThickness = mix(
-    diskInnerThickness,
-    diskOuterThickness,
-    normRForThickness
-);
-
-// When approaching the disk plane, reduce step size
-// Scale based on distance to plane vs local thickness
-const distToPlane = abs(rayPos.y);
-const thicknessScale = localThickness.max(0.05);
-const diskProximity = distToPlane.div(thicknessScale.mul(3.0));
-const diskFactor = smoothstep(float(0.0), float(1.0), diskProximity)
-    .mul(0.85).add(0.15);
-
-// Combine: horizon factor always applies, disk factor only in disk region
-const combinedDiskFactor = mix(float(1.0), diskFactor, step(float(0.5), inDiskRegion));
-const adaptiveStep = stepSize.mul(horizonFactor).mul(combinedDiskFactor);
+  .mul(0.8).add(0.2);  // Range: 0.2 to 1.0
+const adaptiveStep = uniforms.stepSize.mul(horizonFactor);
 ```
 
-Now our step size accounts for:
-1. **Black hole proximity** - accurate geodesics near the photon sphere
-2. **Disk plane proximity** - smaller steps when approaching y = 0
-3. **Local disk thickness** - even smaller steps in thin regions
-
-The thin inner disk is now rendered correctly!
-
-### 3.6 The Banding Problem
-
-With our adaptive stepper, the disk shape is correct. But if you look carefully, you might notice another artifact: **banding**. The disk has visible stripes where the sampling is uniform.
-
-This happens because every ray at a similar depth takes steps at the same positions. When those positions align with our noise functions or color gradients, we get coherent patterns instead of smooth gradients.
-
-### 3.7 Third Fix: Step Jitter
-
-The solution is to add controlled randomness to our sampling positions:
-
-```javascript
-// Apply jitter to sample position (not ray path) to break up banding
-// This keeps the ray path deterministic for stable background stars
-const sampleNoise = hash33(rayPos.add(vec3(frameIndex.mul(0.1))));
-const jitterOffset = sampleNoise.sub(0.5).mul(adaptiveStep).mul(stepJitter);
-const samplePos = rayPos.add(jitterOffset);
-
-// Use samplePos (not rayPos) for disk sampling
-const hitR = sqrt(samplePos.x.mul(samplePos.x).add(samplePos.z.mul(samplePos.z)));
-```
-
-Key insight: we jitter the **sampling position**, not the **ray position**. If we jittered the ray itself, background stars would flicker because each frame would trace a different path. By keeping the ray path deterministic and only jittering where we sample the disk, we get:
-- Smooth, band-free disk rendering
-- Stable, flicker-free background stars
-
-The `stepJitter` parameter (typically 0.15-0.3) controls how much randomness to add. More jitter breaks up banding better but can introduce noise at low sample counts.
-
-### 3.8 Disk Color and Opacity
-
-With our sampling working correctly, we can focus on the disk appearance:
-
-```javascript
-const accretionDiskColor = Fn(([hitR, hitAngle, time]) => {
-    // Normalized radius (0 at inner edge, 1 at outer edge)
-    const normR = clamp(hitR.sub(innerR).div(outerR.sub(innerR)), 0.0, 1.0);
-
-    // Temperature profile: T ~ r^(-3/4)
-    const temperature = pow(normR.add(0.05), float(-0.75)).mul(diskTemperature);
-
-    // Color based on temperature
-    const colorMix = smoothstep(float(0.5), float(2.5), temperature);
-    const diskColor = mix(outerColor, innerColor, colorMix);
-
-    // Turbulence for realistic swirling patterns
-    const orbitalPhase = hitAngle.add(time.mul(rotationSpeed).div(sqrt(hitR.add(0.5))));
-    const turbCoord = vec3(
-        cos(orbitalPhase).mul(hitR),
-        sin(orbitalPhase).mul(hitR),
-        hitR.mul(0.5)
-    );
-    const turbulence = fbm(turbCoord.mul(turbulenceScale));
-
-    return vec4(diskColor, turbulence);  // rgb = color, a = opacity
-});
-```
-
-### 3.9 Creating Ring Patterns
-
-Real accretion disks aren't uniformly bright - they have concentric ring structures caused by density waves, orbital resonances, and variations in the flow of material. Let's add these patterns to make our disk more realistic.
-
-#### First Attempt: Sine Waves
-
-The most obvious approach is to use sine waves based on radius:
-
-```javascript
-// Simple sine wave rings
-const ringPattern = sin(hitR.mul(ringScale)).mul(0.5).add(0.5);
-const opacity = ringPattern.mul(baseOpacity);
-```
-
-This creates perfectly regular, evenly-spaced rings:
-
-The problem? Nature isn't this regular. Real accretion disk features vary in spacing, intensity, and sharpness. Our sine wave rings look artificial - like the grooves on a vinyl record rather than the chaotic flow of superheated plasma.
-
-#### The Fix: 1D Noise
-
-Instead of regular sine waves, we can use 1D noise to create irregular ring patterns. The key insight is that we only need to vary by *radius* - we want concentric rings, not random blobs.
-
-```javascript
-/**
- * 1D Value noise for ring patterns.
- * Takes a single float input and returns smooth noise in [0,1].
- */
-const noise1D = Fn(([x]) => {
-    const i = floor(x);
-    const f = fract(x);
-    // Quintic interpolation for smooth results
-    const u = f.mul(f).mul(f).mul(f.mul(f.mul(6.0).sub(15.0)).add(10.0));
-    // Hash the integer positions
-    const a = fract(sin(i.mul(127.1)).mul(43758.5453));
-    const b = fract(sin(i.add(1.0).mul(127.1)).mul(43758.5453));
-    return mix(a, b, u);
-});
-```
-
-But a single octave of noise creates rings that are all similar in thickness. For more natural variation, we use Fractal Brownian Motion (FBM) - multiple octaves of noise at different scales:
-
-```javascript
-/**
- * 1D Fractal Brownian Motion for ring patterns.
- */
-const fbm1D = Fn(([x, octaves, lacunarity, persistence]) => {
-    const value = float(0.0).toVar();
-    const amplitude = float(1.0).toVar();
-    const frequency = float(1.0).toVar();
-    const maxValue = float(0.0).toVar();
-
-    // Add multiple octaves of noise
-    for (let i = 0; i < octaves; i++) {
-        value.addAssign(noise1D(x.mul(frequency)).mul(amplitude));
-        maxValue.addAssign(amplitude);
-        amplitude.mulAssign(persistence);  // Each octave is quieter
-        frequency.mulAssign(lacunarity);   // Each octave is higher frequency
-    }
-
-    return value.div(maxValue);  // Normalize to [0, 1]
-});
-```
-
-The parameters control the character of the rings:
-- **Scale**: How many rings across the disk (3-10 works well)
-- **Octaves**: How many layers of detail (3-4 is typical)
-- **Lacunarity**: Frequency multiplier between octaves (2.0 = each octave is twice the frequency)
-- **Persistence**: Amplitude multiplier between octaves (0.5 = each octave is half as loud)
-
-Now we apply this to our disk opacity:
-
-```javascript
-// Sample 1D FBM noise based on radius
-const noiseInput = hitR.mul(ringNoiseScale);
-const ringNoise = fbm1D(
-    noiseInput,
-    ringNoiseOctaves,
-    ringNoiseLacunarity,
-    ringNoisePersistence
-);
-
-// Apply amplitude, offset, and sharpness
-const rawRing = ringNoise.mul(ringNoiseAmplitude).add(ringNoiseOffset);
-const ringOpacity = pow(clamp(rawRing, 0.0, 1.0), ringNoiseSharpness);
-```
-
-The **sharpness** parameter is particularly useful - higher values create sharper, more defined ring boundaries, while lower values give softer, more diffuse patterns.
-
-The result is much more convincing: rings that vary in spacing, thickness, and intensity, creating the kind of structure we see in actual astronomical observations.
-
-### 3.10 Relativistic Effects
-
-**Gravitational Redshift:**
-Light loses energy climbing out of a gravity well:
-
-```javascript
-const redshift = sqrt(1.0 - rs / hitR);
-diskColor.mulAssign(redshift);
-```
-
-### 3.11 Procedural Background
-
-Our star field uses a grid-based approach for consistent star positions:
-
-```javascript
-const starField = Fn(([rayDir]) => {
-    // Convert to spherical coordinates
-    const theta = atan(rayDir.z, rayDir.x);
-    const phi = asin(rayDir.y);
-
-    // Grid cell
-    const cell = vec2(theta, phi).mul(gridScale).floor();
-
-    // Hash determines if this cell has a star
-    const cellHash = hash21(cell);
-    const hasStar = cellHash < starDensity;
-
-    // Star position within cell
-    const starPos = hash33(cell).xy.mul(0.8).add(0.1);
-    const distToStar = length(fract(cell) - starPos);
-
-    // Brightness based on distance
-    const brightness = smoothstep(starSize, 0.0, distToStar) * hasStar;
-
-    return starColor.mul(brightness);
-});
-```
-
-Because we apply this to the *bent* ray direction, stars near the black hole appear distorted - exactly as physics predicts.
+Near the event horizon (`distFromHorizon ≈ 0`), we use 20% of the base step size. Far away, we use the full step size. This concentrates our computational budget where it matters most.
 
 ---
 
-## Part 4: Performance Optimization
+## Part 4: The Accretion Disk
 
-Raymarching is expensive. Here's how we achieve real-time performance:
+### 4.1 Disk Intersection
 
-### 4.1 Quality Presets
+Rather than volumetric sampling (stepping through a thick disk), we use **analytic plane intersection**. The disk lies in the XZ plane (Y = 0), so we detect when the ray crosses this plane:
 
-We expose ray count and step size as parameters:
+```javascript
+const prevPos = camPos.toVar('prevPos');
 
-| Preset | Ray Steps | Step Size | Target FPS |
-|--------|-----------|-----------|------------|
-| Low    | 64        | 0.4       | 60         |
-| Medium | 100       | 0.3       | 30-60      |
-| High   | 150       | 0.2       | 30         |
-| Ultra  | 256       | 0.15      | 15-30      |
+// Inside the loop, after stepping:
+prevPos.assign(rayPos);  // Save position before stepping
+rayPos.addAssign(rayDir.mul(adaptiveStep));
 
-### 4.2 The Adaptive Stepping Performance Benefit
+// Did we cross the Y = 0 plane?
+const crossedPlane = prevPos.y.mul(rayPos.y).lessThan(0.0);
 
-Our disk-aware adaptive stepping isn't just about quality - it's also about performance. By using larger steps in empty space, we:
-- Take fewer total steps to traverse the same distance
-- Spend our step budget where it matters (near geometry)
-- Maintain quality while improving frame rate
+If(crossedPlane, () => {
+  // Linear interpolation to find exact crossing point
+  const t = prevPos.y.negate().div(rayPos.y.sub(prevPos.y));
+  const hitPos = mix(prevPos, rayPos, t);
 
-### 4.3 Early Termination
+  // Radial distance from center
+  const hitR = sqrt(hitPos.x.mul(hitPos.x).add(hitPos.z.mul(hitPos.z)));
 
-Exit the loop as soon as we know the ray's fate:
+  // Is this within the disk bounds?
+  const inDisk = hitR.greaterThan(innerR).and(hitR.lessThan(outerR));
+
+  If(inDisk, () => {
+    // Sample disk color here...
+  });
+});
+```
+
+This approach is more efficient than volumetric sampling - we only compute disk color when we actually hit it, and we get pixel-perfect intersection points.
+
+**🎯 Checkpoint 4:** With a simple flat color for the disk, we should now see a ring around the black hole. The gravitational lensing causes the far side of the disk to appear warped above and below the black hole.
+
+### 4.2 Blackbody Temperature Coloring
+
+Real accretion disks glow based on their temperature. We implement a blackbody color function that maps temperature (in Kelvin) to RGB:
+
+```javascript
+const blackbodyColor = Fn(([tempK]) => {
+  // Normalize: 1000K -> 0, 10000K -> 1
+  const t = clamp(tempK.sub(1000.0).div(9000.0), float(0.0), float(1.0));
+
+  // Red: high for all temperatures, drops slightly at extreme heat
+  const red = clamp(float(1.0).sub(t.sub(0.8).mul(2.0)), float(0.5), float(1.0));
+
+  // Green: rises from 0 to peak at mid temps
+  const green = smoothstep(float(0.0), float(0.5), t)
+    .mul(float(1.0).sub(t.sub(0.7).mul(0.3).max(0.0)));
+
+  // Blue: only significant at high temperatures
+  const blue = smoothstep(float(0.3), float(1.0), t).mul(t);
+
+  return vec3(red, green, blue);
+});
+```
+
+Now we apply the temperature profile from Section 1.3:
+
+```javascript
+const peakTempK = uniforms.diskTemperature.mul(1000.0);  // e.g., 10 -> 10,000K
+const outerTempK = float(1500.0);  // Minimum at outer edge
+
+// Power law falloff: T ∝ r^(-temperatureFalloff)
+const tempFalloff = pow(innerR.div(hitR), uniforms.temperatureFalloff);
+const tempK = mix(outerTempK, peakTempK, tempFalloff);
+
+const diskColor = blackbodyColor(tempK);
+```
+
+**🎯 Checkpoint 5:** The disk should now show a gradient from white/blue at the inner edge to red/orange at the outer edge.
+
+### 4.3 Edge Softening
+
+Sharp disk boundaries look artificial. We add smooth falloff at both edges:
+
+```javascript
+const normR = clamp(hitR.sub(innerR).div(outerR.sub(innerR)), float(0.0), float(1.0));
+
+const edgeFalloff = smoothstep(float(0.0), uniforms.diskEdgeSoftnessInner, normR)
+  .mul(smoothstep(float(1.0), float(1.0).sub(uniforms.diskEdgeSoftnessOuter), normR));
+```
+
+### 4.4 Turbulent Ring Patterns
+
+Real accretion disks aren't smooth - they have turbulent structure caused by magnetohydrodynamic instabilities. We create this using **3D Fractal Brownian Motion (FBM)**.
+
+First, we need noise functions:
+
+```javascript
+// 3D Value noise
+const noise3D = Fn(([p]) => {
+  const i = floor(p);
+  const f = fract(p);
+  const u = f.mul(f).mul(float(3.0).sub(f.mul(2.0)));  // Smoothstep
+
+  // Hash the 8 corners of the cube and interpolate
+  // ... (trilinear interpolation of hashed values)
+});
+
+// Fractal Brownian Motion - layered noise
+const fbm = Fn(([p]) => {
+  const value = float(0.0).toVar();
+  const amplitude = float(0.5).toVar();
+  const pos = p.toVar();
+
+  // 4 octaves
+  for (let i = 0; i < 4; i++) {
+    value.addAssign(noise3D(pos).mul(amplitude));
+    pos.mulAssign(2.0);
+    amplitude.mulAssign(0.5);
+  }
+
+  return value;
+});
+```
+
+Now we apply this to create swirling patterns. The key insight is using **anisotropic coordinates** - we stretch the noise differently in the radial vs. azimuthal directions to create arc-like structures rather than random blobs:
+
+```javascript
+const hitAngle = atan(hitPos.z, hitPos.x);
+
+// Keplerian rotation: inner regions rotate faster
+const keplerianPhase = time.mul(uniforms.diskRotationSpeed).div(pow(hitR, float(1.5)));
+const rotatedAngle = hitAngle.add(keplerianPhase);
+
+// Anisotropic sampling: radial creates rings, azimuthal creates arcs
+const noiseCoord = vec3(
+  hitR.mul(uniforms.turbulenceScale),                          // Radial component
+  cos(rotatedAngle).div(uniforms.turbulenceStretch.max(0.1)), // Stretched azimuthally
+  sin(rotatedAngle).div(uniforms.turbulenceStretch.max(0.1))
+);
+
+const turbulence = fbm(noiseCoord);
+const ringOpacity = pow(clamp(turbulence, float(0.0), float(1.0)), uniforms.turbulenceSharpness);
+```
+
+The `turbulenceStretch` parameter (default 5.0) controls how elongated the structures are. Higher values create longer arcs that wrap around the disk.
+
+### 4.5 The Cyclic Time Problem
+
+There's a subtle issue with Keplerian rotation: the phase grows without bound over time. For very long-running simulations, this can cause floating-point precision issues and visual discontinuities.
+
+The fix is to use **cyclic time with crossfading**:
+
+```javascript
+const cycleLength = uniforms.turbulenceCycleTime;  // e.g., 10 seconds
+const cyclicTime = time.mod(cycleLength);
+const blendFactor = cyclicTime.div(cycleLength);
+
+// Sample two phases offset by one cycle
+const phase1 = cyclicTime.mul(rotationSpeed).div(pow(hitR, float(1.5)));
+const phase2 = cyclicTime.add(cycleLength).mul(rotationSpeed).div(pow(hitR, float(1.5)));
+
+const turbulence1 = fbm(/* coords with phase1 */);
+const turbulence2 = fbm(/* coords with phase2 */);
+
+// Crossfade to hide the cycle reset
+const turbulence = mix(turbulence2, turbulence1, blendFactor);
+```
+
+This creates seamless looping - as one phase approaches its reset point, we blend into the next phase.
+
+**🎯 Checkpoint 6:** The disk should now show dynamic, swirling arc patterns that rotate differentially - inner regions spin faster than outer regions, creating realistic shearing.
+
+### 4.6 Alpha Compositing
+
+Because the disk is thin but the ray can pass through it multiple times (from different angles due to lensing), we use front-to-back alpha compositing:
+
+```javascript
+const color = vec3(0.0, 0.0, 0.0).toVar('color');
+const alpha = float(0.0).toVar('alpha');
+
+// When we hit the disk:
+const diskResult = accretionDiskColor(hitR, hitAngle, time);  // Returns vec4(rgb, opacity)
+const remainingAlpha = float(1.0).sub(alpha);
+color.addAssign(diskResult.xyz.mul(diskResult.w).mul(remainingAlpha));
+alpha.addAssign(remainingAlpha.mul(diskResult.w));
+
+// Early termination when fully opaque
+If(alpha.greaterThan(0.99), () => { Break(); });
+```
+
+---
+
+## Part 5: Procedural Background
+
+### 5.1 Star Field
+
+For rays that escape to infinity, we show a procedural star field. We use a grid-based approach that ensures consistent star positions regardless of camera angle:
+
+```javascript
+const createStarField = (uniforms) => Fn(([rayDir]) => {
+  // Convert ray direction to spherical coordinates
+  const theta = atan(rayDir.z, rayDir.x);
+  const phi = asin(clamp(rayDir.y, float(-1.0), float(1.0)));
+
+  // Grid cells
+  const gridScale = float(60.0).div(uniforms.starSize);
+  const cell = floor(vec2(theta, phi).mul(gridScale));
+  const cellUV = fract(vec2(theta, phi).mul(gridScale));
+
+  // Hash determines if this cell has a star
+  const cellHash = hash21(cell);
+  const starProb = step(float(1.0).sub(uniforms.starDensity), cellHash);
+
+  // Star position within cell (offset from edges)
+  const starPos = hash22(cell.add(42.0)).mul(0.8).add(0.1);
+  const distToStar = length(cellUV.sub(starPos));
+
+  // Brightness with soft glow
+  const starCore = smoothstep(starSize, float(0.0), distToStar);
+  const starGlow = smoothstep(starSize.mul(3.0), float(0.0), distToStar).mul(0.3);
+
+  return starColor.mul(starCore.add(starGlow)).mul(starProb);
+});
+```
+
+Because we apply this to the *bent* ray direction (after gravitational lensing), stars near the black hole appear distorted - exactly as physics predicts. You can see the Einstein ring effect where background stars appear to wrap around the black hole's shadow.
+
+**🎯 Checkpoint 7:** Stars should now be visible in the background, distorted into arcs near the black hole.
+
+### 5.2 Nebula Clouds
+
+For additional atmosphere, we add procedural nebula using layered FBM noise:
+
+```javascript
+const createNebulaField = (uniforms) => Fn(([rayDir]) => {
+  // Layer 1
+  const n1 = fbm(rayDir.mul(uniforms.nebula1Scale)).mul(2.0).sub(1.0);
+  const layer1 = clamp(n1.add(uniforms.nebula1Density), float(0.0), float(1.0));
+  const color1 = uniforms.nebula1Color.mul(layer1).mul(uniforms.nebula1Brightness);
+
+  // Layer 2 (different scale for variety)
+  const n2 = fbm(rayDir.mul(uniforms.nebula2Scale)).mul(2.0).sub(1.0);
+  const layer2 = clamp(n2.add(uniforms.nebula2Density), float(0.0), float(1.0));
+  const color2 = uniforms.nebula2Color.mul(layer2).mul(uniforms.nebula2Brightness);
+
+  return color1.add(color2);
+});
+```
+
+Two independent layers with different scales and colors create depth and visual interest.
+
+**🎯 Checkpoint 8:** Colorful nebula clouds should now appear in the background, adding cosmic atmosphere.
+
+---
+
+## Part 6: Final Polish
+
+### 6.1 Gamma Correction
+
+Computer monitors expect gamma-corrected values. We apply the standard sRGB correction:
+
+```javascript
+const finalColor = pow(color, vec3(1.0 / 2.2));
+return vec4(finalColor, 1.0);
+```
+
+### 6.2 Complete Raymarching Loop
+
+Here's the full loop structure with all components:
+
+```javascript
+Loop(64, () => {
+  // Early termination checks
+  If(escaped.or(captured).or(alpha.greaterThan(0.99)), () => { Break(); });
+
+  const r = length(rayPos);
+
+  // Captured by black hole
+  If(r.lessThan(rs.mul(1.01)), () => {
+    captured.assign(1.0);
+    Break();
+  });
+
+  // Escaped to infinity
+  If(r.greaterThan(100.0), () => {
+    escaped.assign(1.0);
+    Break();
+  });
+
+  // Adaptive stepping
+  const adaptiveStep = computeAdaptiveStep(r, rs);
+
+  // Gravitational bending
+  applyGravitationalBending(rayPos, rayDir, r, rs, adaptiveStep);
+
+  // Save previous position and step forward
+  prevPos.assign(rayPos);
+  rayPos.addAssign(rayDir.mul(adaptiveStep));
+
+  // Disk intersection
+  checkDiskIntersection(prevPos, rayPos, color, alpha);
+});
+
+// Background for escaped rays
+If(escaped.and(alpha.lessThan(0.99)), () => {
+  const bg = starField(rayDir).add(nebulaField(rayDir));
+  color.addAssign(bg.mul(float(1.0).sub(alpha)));
+});
+```
+
+---
+
+## Part 7: Performance Considerations
+
+### 7.1 Step Count vs. Quality
+
+The number of raymarching iterations directly affects both quality and performance:
+
+| Steps | Quality | Use Case |
+|-------|---------|----------|
+| 32    | Low     | Mobile, testing |
+| 64    | Medium  | Default (good balance) |
+| 128   | High    | Screenshots, powerful GPUs |
+| 256   | Ultra   | Offline rendering |
+
+### 7.2 Adaptive Stepping Benefits
+
+Our horizon-based adaptive stepping isn't just about accuracy - it's also about performance. By using larger steps in empty space far from the black hole, we effectively get more distance covered with fewer iterations.
+
+### 7.3 Early Termination
+
+We exit the loop as soon as we know the ray's fate:
 - **Captured**: `r < rs` - ray fell into black hole
-- **Escaped**: `totalDistance > maxDistance` - ray left the scene
+- **Escaped**: `r > 100` - ray left the scene
 - **Opaque**: `alpha > 0.99` - accumulated enough disk material
-
----
-
-## Part 5: Results
-
-The final simulation achieves:
-- **Real-time performance** (30-60 FPS) on modern GPUs
-- **Physically-based** gravitational lensing
-- **Interactive** camera controls and parameters
-- **Beautiful** accretion disk with turbulence and proper thin-disk handling
-
-The effect is most dramatic when you orbit the camera around the black hole - you can see how the disk bends above and below, creating the iconic "Interstellar" look.
 
 ---
 
 ## Conclusion
 
-We've built a real-time black hole visualization using WebGPU and Three.js. Along the way, we learned:
+We've built a real-time black hole visualization from scratch. The key insights were:
 
-1. **Schwarzschild spacetime** - How black holes curve light
-2. **Raymarching** - Why it's ideal for curved spacetime
-3. **Adaptive stepping** - Solving aliasing with geometry-aware step sizes
-4. **Jitter** - Breaking up banding artifacts while keeping background stable
-5. **TSL shaders** - Writing GPU code in JavaScript
+1. **Raymarching is ideal for curved spacetime** - we can bend rays at each step according to gravitational physics.
 
-The key lesson is that building graphics involves an iterative process: implement something simple, observe where it breaks, then fix it with targeted solutions. Each "fix" deepens our understanding of both the problem and the underlying physics.
+2. **Analytic intersection beats volumetric sampling** - for a thin disk, computing exact plane crossings is both faster and more accurate than stepping through volume.
+
+3. **Anisotropic noise creates believable structure** - by stretching noise differently in radial vs. azimuthal directions, we get arc-like patterns that mimic real turbulence.
+
+4. **Blackbody radiation gives physically-motivated color** - the temperature profile from thin-disk theory naturally produces the iconic white-hot inner edge fading to red-orange outer regions.
+
+5. **Adaptive stepping balances quality and performance** - smaller steps near the event horizon capture the dramatic light bending, while larger steps elsewhere save computation.
+
+The effect is most dramatic when you orbit the camera around the black hole - you can see how the disk appears to bend above and below, with the far side visible through gravitational lensing. Background stars create Einstein rings as they pass behind the black hole.
 
 **Potential extensions:**
 - Spinning (Kerr) black holes with frame dragging
+- Doppler beaming (relativistic brightness variation based on disk velocity)
+- Gravitational redshift
 - Wormholes connecting two regions of space
-- Relativistic jets
-- Gravitational waves affecting the spacetime
 
 ---
 

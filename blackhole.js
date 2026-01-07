@@ -22,38 +22,7 @@ import { uniform } from 'three/tsl';
 import { createBlackHoleShader } from './blackhole-shader.js';
 
 // ============================================================================
-// SECTION 1: PHYSICAL CONSTANTS AND CONFIGURATION
-// ============================================================================
-
-/**
- * Quality presets for balancing visual quality vs performance.
- * These control the raymarching parameters.
- */
-export const QUALITY_PRESETS = {
-  low: {
-    stepSize: 0.4,
-    starsEnabled: false,
-    nebulaEnabled: false
-  },
-  medium: {
-    stepSize: 0.3,
-    starsEnabled: true,
-    nebulaEnabled: false
-  },
-  high: {
-    stepSize: 0.2,
-    starsEnabled: true,
-    nebulaEnabled: true
-  },
-  ultra: {
-    stepSize: 0.15,
-    starsEnabled: true,
-    nebulaEnabled: true
-  }
-};
-
-// ============================================================================
-// SECTION 2: BLACK HOLE SIMULATION CLASS
+// SECTION 1: BLACK HOLE SIMULATION CLASS
 // ============================================================================
 
 export class BlackHoleSimulation {
@@ -91,9 +60,10 @@ export class BlackHoleSimulation {
       // === Turbulence Pattern Controls ===
       turbulenceScale: uniform(config.turbulenceScale ?? 1.0),
       turbulenceStretch: uniform(config.turbulenceStretch ?? 5.0),
-      turbulenceBrightness: uniform(config.turbulenceBrightness ?? 0.3),
       turbulenceSharpness: uniform(config.turbulenceSharpness ?? 1.0),
       turbulenceCycleTime: uniform(config.turbulenceCycleTime ?? 10.0),
+      turbulenceLacunarity: uniform(config.turbulenceLacunarity ?? 2.0),
+      turbulencePersistence: uniform(config.turbulencePersistence ?? 0.5),
 
       // === Disk Edge Falloff ===
       diskEdgeSoftnessInner: uniform(config.diskEdgeSoftnessInner ?? 0.15),
@@ -101,9 +71,6 @@ export class BlackHoleSimulation {
 
       // === Relativistic Effects ===
       gravitationalLensing: uniform(config.gravitationalLensing ?? 1.5),
-
-      // === Disk Opacity ===
-      diskDensity: uniform(config.diskDensity ?? 0.25),
 
       // === Performance ===
       stepSize: uniform(config.stepSize ?? 0.3),
@@ -198,9 +165,10 @@ export class BlackHoleSimulation {
     // Turbulence pattern
     if (config.turbulenceScale !== undefined) u.turbulenceScale.value = config.turbulenceScale;
     if (config.turbulenceStretch !== undefined) u.turbulenceStretch.value = config.turbulenceStretch;
-    if (config.turbulenceBrightness !== undefined) u.turbulenceBrightness.value = config.turbulenceBrightness;
     if (config.turbulenceSharpness !== undefined) u.turbulenceSharpness.value = config.turbulenceSharpness;
     if (config.turbulenceCycleTime !== undefined) u.turbulenceCycleTime.value = config.turbulenceCycleTime;
+    if (config.turbulenceLacunarity !== undefined) u.turbulenceLacunarity.value = config.turbulenceLacunarity;
+    if (config.turbulencePersistence !== undefined) u.turbulencePersistence.value = config.turbulencePersistence;
 
     // Disk edge falloff
     if (config.diskEdgeSoftnessInner !== undefined) u.diskEdgeSoftnessInner.value = config.diskEdgeSoftnessInner;
@@ -208,9 +176,6 @@ export class BlackHoleSimulation {
 
     // Relativistic effects
     if (config.gravitationalLensing !== undefined) u.gravitationalLensing.value = config.gravitationalLensing;
-
-    // Disk opacity
-    if (config.diskDensity !== undefined) u.diskDensity.value = config.diskDensity;
 
     // Performance
     if (config.stepSize !== undefined) u.stepSize.value = config.stepSize;
@@ -236,20 +201,6 @@ export class BlackHoleSimulation {
     if (config.nebula2Color !== undefined) u.nebula2Color.value.set(config.nebula2Color);
 
     // Note: Disk color is computed from blackbody radiation (no color uniforms needed)
-  }
-
-  /**
-   * Apply a quality preset.
-   */
-  applyQualityPreset(presetName) {
-    const preset = QUALITY_PRESETS[presetName];
-    if (!preset) return;
-
-    this.updateUniforms({
-      stepSize: preset.stepSize,
-      starsEnabled: preset.starsEnabled,
-      nebulaEnabled: preset.nebulaEnabled
-    });
   }
 
   /**

@@ -123,20 +123,19 @@ const defaultConfig = {
   // Turbulence pattern
   turbulenceScale: 1.0,
   turbulenceStretch: 5.0, // Higher = longer arcs
-  turbulenceBrightness: 0.3,
   turbulenceSharpness: 1.0,
   turbulenceCycleTime: 10.0, // Seconds before pattern cycles (prevents infinite winding)
+  turbulenceLacunarity: 2.0, // Frequency multiplier per octave
+  turbulencePersistence: 0.5, // Amplitude multiplier per octave
 
-  // Disk edge falloff and opacity
+  // Disk edge falloff
   diskEdgeSoftnessInner: 0.15,
   diskEdgeSoftnessOuter: 0.15,
-  diskDensity: 0.25,
 
   // Relativistic effects
   gravitationalLensing: 1.5,
 
   // Performance
-  qualityPreset: 'medium',
   stepSize: 0.3,
 
   // Stars
@@ -246,12 +245,6 @@ const ui = new BlackHoleUI(config, {
     if (bloomPassNode) {
       bloomPassNode[property].value = value;
     }
-  },
-
-  // Handle quality preset changes
-  // Note: UI's applyQualityPreset already updates config before calling this
-  onQualityPreset: (presetName) => {
-    blackHoleSimulation.applyQualityPreset(presetName);
   },
 
   // Handle regeneration (e.g., after major config changes)

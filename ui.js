@@ -6,7 +6,6 @@
  */
 
 import { Pane } from 'tweakpane';
-import { QUALITY_PRESETS } from './blackhole.js';
 
 export class BlackHoleUI {
   constructor(config, callbacks) {
@@ -115,36 +114,6 @@ export class BlackHoleUI {
       readonly: true,
       label: 'FPS'
     });
-
-    // Quality preset dropdown
-    perfFolder.addBinding(this.config, 'qualityPreset', {
-      options: {
-        'Low (60 FPS)': 'low',
-        'Medium (30-60 FPS)': 'medium',
-        'High (30 FPS)': 'high',
-        'Ultra (15-30 FPS)': 'ultra'
-      },
-      label: 'Quality'
-    }).on('change', () => {
-      this.applyQualityPreset(this.config.qualityPreset);
-    });
-
-  }
-
-  applyQualityPreset(presetName) {
-    const preset = QUALITY_PRESETS[presetName];
-    if (!preset) return;
-
-    // Update config
-    this.config.stepSize = preset.stepSize;
-    this.config.starsEnabled = preset.starsEnabled;
-    this.config.nebulaEnabled = preset.nebulaEnabled;
-
-    // Apply to simulation
-    this.callbacks.onQualityPreset(presetName);
-
-    // Refresh UI to reflect changes
-    this.pane.refresh();
   }
 
   // ==========================================================================
@@ -248,15 +217,6 @@ export class BlackHoleUI {
       this.callbacks.onUniformChange('diskEdgeSoftnessOuter', this.config.diskEdgeSoftnessOuter);
     });
 
-    appearanceFolder.addBinding(this.config, 'diskDensity', {
-      min: 0.05,
-      max: 1,
-      step: 0.01,
-      label: 'Opacity'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('diskDensity', this.config.diskDensity);
-    });
-
     // === Turbulence Pattern ===
     const turbulenceFolder = bhFolder.addFolder({
       title: 'Turbulence',
@@ -279,15 +239,6 @@ export class BlackHoleUI {
       label: 'Arc Stretch'
     }).on('change', () => {
       this.callbacks.onUniformChange('turbulenceStretch', this.config.turbulenceStretch);
-    });
-
-    turbulenceFolder.addBinding(this.config, 'turbulenceBrightness', {
-      min: -1.0,
-      max: 2.0,
-      step: 0.05,
-      label: 'Brightness'
-    }).on('change', () => {
-      this.callbacks.onUniformChange('turbulenceBrightness', this.config.turbulenceBrightness);
     });
 
     turbulenceFolder.addBinding(this.config, 'turbulenceSharpness', {
@@ -315,6 +266,24 @@ export class BlackHoleUI {
       label: 'Cycle Time (s)'
     }).on('change', () => {
       this.callbacks.onUniformChange('turbulenceCycleTime', this.config.turbulenceCycleTime);
+    });
+
+    turbulenceFolder.addBinding(this.config, 'turbulenceLacunarity', {
+      min: 1.0,
+      max: 4.0,
+      step: 0.1,
+      label: 'Lacunarity'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('turbulenceLacunarity', this.config.turbulenceLacunarity);
+    });
+
+    turbulenceFolder.addBinding(this.config, 'turbulencePersistence', {
+      min: 0.1,
+      max: 1.0,
+      step: 0.05,
+      label: 'Persistence'
+    }).on('change', () => {
+      this.callbacks.onUniformChange('turbulencePersistence', this.config.turbulencePersistence);
     });
   }
 

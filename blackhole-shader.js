@@ -93,24 +93,26 @@ const noise3D = Fn(([p]) => {
 /**
  * Fractal Brownian Motion - layered noise for natural-looking turbulence.
  * @param p - 3D position
+ * @param lacunarity - frequency multiplier per octave (typically 2.0)
+ * @param persistence - amplitude multiplier per octave (typically 0.5)
  */
-const fbm = Fn(([p]) => {
+const fbm = Fn(([p, lacunarity, persistence]) => {
   const value = float(0.0).toVar();
   const amplitude = float(0.5).toVar();
   const pos = p.toVar();
 
   // 4 octaves of noise
   value.addAssign(noise3D(pos).mul(amplitude));
-  pos.mulAssign(2.0);
-  amplitude.mulAssign(0.5);
+  pos.mulAssign(lacunarity);
+  amplitude.mulAssign(persistence);
 
   value.addAssign(noise3D(pos).mul(amplitude));
-  pos.mulAssign(2.0);
-  amplitude.mulAssign(0.5);
+  pos.mulAssign(lacunarity);
+  amplitude.mulAssign(persistence);
 
   value.addAssign(noise3D(pos).mul(amplitude));
-  pos.mulAssign(2.0);
-  amplitude.mulAssign(0.5);
+  pos.mulAssign(lacunarity);
+  amplitude.mulAssign(persistence);
 
   value.addAssign(noise3D(pos).mul(amplitude));
 
@@ -203,13 +205,13 @@ const createStarField = (uniforms) => Fn(([rayDir]) => {
 const createNebulaField = (uniforms) => Fn(([rayDir]) => {
   // Layer 1
   const noisePos1 = rayDir.mul(uniforms.nebula1Scale);
-  const n1 = fbm(noisePos1).mul(2.0).sub(1.0);
+  const n1 = fbm(noisePos1, float(2.0), float(0.5)).mul(2.0).sub(1.0);
   const layer1 = clamp(n1.add(uniforms.nebula1Density), float(0.0), float(1.0));
   const color1 = uniforms.nebula1Color.mul(layer1).mul(uniforms.nebula1Brightness);
 
   // Layer 2
   const noisePos2 = rayDir.mul(uniforms.nebula2Scale);
-  const n2 = fbm(noisePos2).mul(2.0).sub(1.0);
+  const n2 = fbm(noisePos2, float(2.0), float(0.5)).mul(2.0).sub(1.0);
   const layer2 = clamp(n2.add(uniforms.nebula2Density), float(0.0), float(1.0));
   const color2 = uniforms.nebula2Color.mul(layer2).mul(uniforms.nebula2Brightness);
 
@@ -278,15 +280,14 @@ const createAccretionDiskColor = (uniforms) => Fn(([hitR, hitAngle, time]) => {
     sin(rotatedAngle2).div(uniforms.turbulenceStretch.max(0.1))
   );
 
-  const turbulence1 = fbm(noiseCoord1);
-  const turbulence2 = fbm(noiseCoord2);
+  const turbulence1 = fbm(noiseCoord1, uniforms.turbulenceLacunarity, uniforms.turbulencePersistence);
+  const turbulence2 = fbm(noiseCoord2, uniforms.turbulenceLacunarity, uniforms.turbulencePersistence);
 
   // Crossfade: at cyclicTime=0 show turbulence2, at cyclicTime=cycleLength show turbulence1
   const turbulence = mix(turbulence2, turbulence1, blendFactor);
 
-  // Apply brightness and sharpness
-  const rawRing = turbulence.add(uniforms.turbulenceBrightness);
-  ringOpacity.assign(pow(clamp(rawRing, float(0.0), float(1.0)), uniforms.turbulenceSharpness));
+  // Apply sharpness
+  ringOpacity.assign(pow(clamp(turbulence, float(0.0), float(1.0)), uniforms.turbulenceSharpness));
 
   // Combine ring opacity with edge falloff (fades to transparent, not black)
   const finalOpacity = ringOpacity.mul(edgeFalloff);
@@ -417,12 +418,11 @@ export function createBlackHoleShader(uniforms) {
 
           // Get disk color and opacity (includes edge falloff and turbulence)
           const diskResult = accretionDiskColor(hitR, hitAngle, uniforms.time);
-          const finalOpacity = diskResult.w.mul(uniforms.diskDensity);
 
           // Alpha blending (front-to-back compositing)
           const remainingAlpha = float(1.0).sub(alpha);
-          color.addAssign(diskResult.xyz.mul(finalOpacity).mul(remainingAlpha));
-          alpha.addAssign(remainingAlpha.mul(finalOpacity));
+          color.addAssign(diskResult.xyz.mul(diskResult.w).mul(remainingAlpha));
+          alpha.addAssign(remainingAlpha.mul(diskResult.w));
         });
       });
     });
