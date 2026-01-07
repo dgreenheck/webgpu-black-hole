@@ -1,8 +1,8 @@
 {
-  "name": "webgpu-galaxy",
+  "name": "webgpu-black-hole",
   "version": "1.0.0",
   "type": "module",
-  "description": "GPU Galaxy Simulation using WebGPU and Three.js",
+  "description": "Black hole Simulation using WebGPU and Three.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
